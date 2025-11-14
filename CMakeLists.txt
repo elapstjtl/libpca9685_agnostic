@@ -15,5 +15,11 @@ add_library(pca9685_agnostic STATIC
 target_include_directories(pca9685_agnostic
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/include/libpca9685_agnostic
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+# Build examples (optional)
+option(PCA9685_BUILD_EXAMPLES "Build examples for PCA9685" OFF)
+if(PCA9685_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()

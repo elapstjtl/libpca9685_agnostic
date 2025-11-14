@@ -1,74 +1,57 @@
-#include "SCD4XPlus/SCD4XPlus.hpp"
+#include "libpca9685_agnostic/pca9685.hpp"
 #include "platform/linux/linux_i2c_bus.hpp"
 #include "platform/linux/linux_delay.hpp"
-#include <iostream>
-#include <chrono>
-#include <thread>
-#include <string>
-#include <string_view>
-#include <sstream>
-#include <iomanip>
 
-// log function for debug
-void my_logger(std::string_view message) {
-    std::cout << "[SCD4X++ DEBUG] " << message << std::endl;
+#include <chrono>
+#include <iostream>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace {
+void log_message(const std::string& message) {
+    std::cout << "[PCA9685 DEMO] " << message << std::endl;
 }
 
+constexpr uint8_t kServoChannel = 0;
+constexpr uint16_t kMinPulseUs = 600;
+constexpr uint16_t kMaxPulseUs = 2400;
+} // namespace
+
 int main() {
-    my_logger("SCD4x C++ Library Raspberry Pi Example");
+    log_message("Raspberry Pi PCA9685 example starting...");
 
-    // 1. instantiate platform-specific hardware implementation
-    //    Raspberry Pi 3/4/5 I2C is usually on /dev/i2c-1
-    LinuxI2CBus bus(std::string("/dev/i2c-1"));
-    LinuxDelay delay;
-
-    // check if I2C bus is successfully opened
+    LinuxI2CBus bus("/dev/i2c-1");
     if (!bus.is_valid()) {
-        my_logger("Failed to initialize I2C bus. Please check wiring and permissions.");
+        log_message("Failed to open /dev/i2c-1. Check wiring and permissions.");
         return 1;
     }
 
-    // 2. inject hardware implementation into our platform-independent library
-    SCD4XPlus sensor(bus, delay, 0x62);
+    LinuxDelay delay;
+    PCA9685 pwm(bus, delay);
 
-    // 3. all subsequent code is platform-independent!
-    //    this code can be copied and run on STM32 or other platforms
-    my_logger("Starting periodic measurements...");
-
-    if (auto started = sensor.start_periodic_measurement(); !started) {
-        std::ostringstream oss;
-        oss << "Failed to start periodic measurement: " << SCD4XerrorCodeToString(started.error());
-        my_logger(oss.str());
+    if (!pwm.initialize()) {
+        log_message("Failed to initialize PCA9685 device.");
         return 1;
     }
+
+    if (!pwm.set_pwm_frequency(50.0F)) {
+        log_message("Failed to set PWM frequency to 50Hz.");
+        return 1;
+    }
+
+    log_message("Sweeping servo connected to channel 0.");
+    std::vector<uint16_t> sweep_values = {kMinPulseUs, kMaxPulseUs, (kMinPulseUs + kMaxPulseUs) / 2};
 
     while (true) {
-        auto ready = sensor.get_data_ready_status();
-        if (!ready) {
-            std::ostringstream oss;
-            oss << "Failed to get data ready status: " << SCD4XerrorCodeToString(ready.error());
-            my_logger(oss.str());
-            return 1;
-        }
-
-        if (*ready) {
-            my_logger("Data ready to read");
-
-            if (auto data = sensor.read_measurement()) {
-                std::ostringstream oss;
-                oss << "CO2: " << data->co2_ppm << " ppm, Temp: " 
-                    << std::fixed << std::setprecision(1) << data->temperature_celsius 
-                    << " C, Hum: " << data->humidity_percent_rh << " %RH";
-                my_logger(oss.str());
-                std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-            } else {
-                std::ostringstream oss;
-                oss << "Failed to read measurement: " << SCD4XerrorCodeToString(data.error());
-                my_logger(oss.str());
+        for (auto pulse : sweep_values) {
+            if (!pwm.write_microseconds(kServoChannel, pulse)) {
+                log_message("Failed to write pulse width to channel.");
+                return 1;
             }
-        } else {
-            my_logger("Data not ready to read");
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+            log_message("Set pulse width to " + std::to_string(pulse) + "us");
+            std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }
 
