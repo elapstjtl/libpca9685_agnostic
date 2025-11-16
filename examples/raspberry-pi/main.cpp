@@ -7,7 +7,7 @@
  * ## 功能说明
  * 
  * 1. 初始化I2C总线和PCA9685芯片
- * 2. 设置PWM频率为1kHz（适用于电机控制）
+ * 2. 设置PWM频率为10kHz（适用于电机控制）
  * 3. 演示H桥方向控制：
  *    - 正转：方向A=高，方向B=低
  *    - 停止：速度=0
@@ -17,9 +17,9 @@
  * 
  * ### H桥控制连接方式
  * - PCA9685模块连接到Raspberry Pi的I2C总线（/dev/i2c-1）
- * - 通道0：PWM信号（速度控制，连接到电机驱动模块的PWM输入）
- * - 通道1：方向A（正转使能，连接到电机驱动模块的方向A）
- * - 通道2：方向B（反转使能，连接到电机驱动模块的方向B）
+ * - 通道12：PWM信号（速度控制，连接到电机驱动模块的PWM输入）
+ * - 通道0：方向A（正转使能，连接到电机驱动模块的方向A）
+ * - 通道1：方向B（反转使能，连接到电机驱动模块的方向B）
  * 
  * ### 电机驱动模块
  * 常见的H桥驱动模块：
@@ -36,7 +36,7 @@
  * ```
  * 
  * @note 需要root权限或i2c组权限才能访问I2C设备
- * @note 电机控制通常需要更高的PWM频率（1kHz以上），本示例使用1kHz
+ * @note 电机控制通常需要更高的PWM频率（1kHz以上），本示例使用10kHz
  * @note 根据实际硬件连接修改通道号
  */
 
@@ -93,7 +93,7 @@ int main() {
     }
     log_message("PCA9685 initialized successfully.");
 
-    // 步骤5：设置PWM频率为1kHz（适用于电机控制）
+    // 步骤5：设置PWM频率为10kHz（适用于电机控制）
     // 注意：电机控制通常需要更高的频率（1kHz-20kHz）
     // 频率太低会导致电机噪音和振动
     if (!pwm.set_pwm_frequency(10000.0F)) {
@@ -103,9 +103,9 @@ int main() {
     log_message("PWM frequency set to 10kHz.");
     
     // H桥方向控制
-    // 通道0：PWM速度控制
-    // 通道1：方向A（正转使能）
-    // 通道2：方向B（反转使能）
+    // 通道12：PWM速度控制（kSpeedChannel）
+    // 通道0：方向A（正转使能，kDirectionAChannel）
+    // 通道1：方向B（反转使能，kDirectionBChannel）
     
     // 步骤1：正转（方向A=高，方向B=低）
     log_message("\n1. 正转（50%速度）...");
@@ -122,9 +122,9 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     
     // 步骤3：反转（方向A=低，方向B=高）
-    log_message("3. 反转（70%速度）...");
+    log_message("3. 反转（90%速度）...");
     pwm.set_speed(kDirectionAChannel, 0.0F);         // 禁用正转（全关）
-    pwm.set_speed(kSpeedChannel, 90.0F);              // 70%速度
+    pwm.set_speed(kSpeedChannel, 90.0F);              // 90%速度
     pwm.set_speed(kDirectionBChannel, 100.0F);       // 使能反转（全开）
     std::this_thread::sleep_for(std::chrono::seconds(3));
     
