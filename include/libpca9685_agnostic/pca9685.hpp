@@ -87,14 +87,41 @@ public:
     static constexpr uint16_t kResolution = 4096;
 
     /**
-     * @brief 构造函数
+     * @brief 构造函数（自动初始化）
      * @param i2c I2C通信接口的引用（必须保持有效直到对象销毁）
      * @param delay 延迟接口的引用（必须保持有效直到对象销毁）
      * @param device_address I2C设备地址，默认为0x40
+     * @param auto_init 是否在构造时自动初始化，默认为true
+     * @param external_clock_prescale 外部时钟prescale值（仅在auto_init=true时有效），0表示使用内部振荡器
      * @note 使用引用而非指针，确保接口对象必须存在，避免空指针问题
      * @note 接口对象的生命周期必须长于PCA9685对象
+     * @note 如果auto_init=true，构造函数会自动调用initialize()初始化芯片
+     * @note 如果初始化失败，对象仍然可以创建，但is_initialized()会返回false
+     * 
+     * @example
+     * ```cpp
+     * // 自动初始化（推荐）
+     * PCA9685 pwm(i2c, delay);
+     * if (pwm.is_initialized()) {
+     *     pwm.set_speed(0, 50.0F);
+     * }
+     * 
+     * // 延迟初始化
+     * PCA9685 pwm(i2c, delay, 0x40, false);
+     * if (pwm.initialize()) {
+     *     pwm.set_speed(0, 50.0F);
+     * }
+     * ```
      */
-    PCA9685(libpca9685_agnostic::I2C_Interface& i2c, libpca9685_agnostic::Delay_Interface& delay, uint8_t device_address = kDefaultI2CAddress);
+    PCA9685(libpca9685_agnostic::I2C_Interface& i2c, libpca9685_agnostic::Delay_Interface& delay, 
+            uint8_t device_address = kDefaultI2CAddress, bool auto_init = true, uint8_t external_clock_prescale = 0);
+
+    /**
+     * @brief 检查芯片是否已初始化
+     * @return 已初始化返回true，未初始化返回false
+     * @note 构造函数会自动初始化，但如果初始化失败，此方法会返回false
+     */
+    bool is_initialized() const;
 
     /**
      * @brief 初始化PCA9685芯片
@@ -102,116 +129,142 @@ public:
      * @return 成功返回true，失败返回false
      * @note 如果external_clock_prescale为0，将使用内部振荡器并设置PWM频率为1kHz
      * @note 初始化过程包括：复位芯片、设置时钟源、设置PWM频率
+     * @note 可以多次调用此方法重新初始化芯片
      * @pre I2C接口必须已正确初始化
      */
     bool initialize(uint8_t external_clock_prescale = 0);
-    
-    /**
-     * @brief 复位PCA9685芯片
-     * @return 成功返回true，失败返回false
-     * @note 通过设置MODE1寄存器的RESTART位来复位芯片
-     * @note 复位后需要等待10ms让芯片稳定（这是数据手册的要求）
-     */
-    bool reset();
-    
-    /**
-     * @brief 使芯片进入睡眠模式（低功耗）
-     * @return 成功返回true，失败返回false
-     * @note 睡眠模式下PWM输出停止，但寄存器值保持不变
-     * @note 修改prescale寄存器前必须先进入睡眠模式（硬件要求）
-     */
-    bool sleep();
-    
-    /**
-     * @brief 唤醒芯片（退出睡眠模式）
-     * @return 成功返回true，失败返回false
-     * @note 唤醒后PWM输出恢复
-     */
-    bool wakeup();
-    
-    /**
-     * @brief 配置使用外部时钟源
-     * @param prescale 外部时钟的prescale值，范围[kPrescaleMin, kPrescaleMax]
-     * @return 成功返回true，失败返回false
-     * @note 外部时钟模式允许使用更精确的外部振荡器
-     * @note 设置过程：进入睡眠 -> 启用外部时钟 -> 设置prescale -> 退出睡眠并重启
-     * @pre prescale必须在有效范围内
-     */
-    bool set_external_clock(uint8_t prescale);
     
     /**
      * @brief 设置PWM频率
      * @param frequency_hz 目标频率（Hz），范围[1.0, 3500.0]，超出范围会被自动限制
      * @return 成功返回true，失败返回false
      * @note 频率计算公式：frequency = oscillator_freq / (4096 * (prescale + 1))
-     * @note 修改prescale前必须先进入睡眠模式（硬件要求），修改后恢复原模式并重启
-     * @note 常用频率：50Hz（舵机）、1000Hz（LED调光）、更高频率（电机控制）
-     * @note 使用四舍五入算法计算prescale：prescale = round(osc_freq / (freq * 4096)) - 1
+     * @note 常用频率：50Hz（舵机）、1000Hz（LED调光/电机控制）
+     * @note 修改prescale前会自动进入睡眠模式（硬件要求），修改后自动恢复
      */
     bool set_pwm_frequency(float frequency_hz);
     
     /**
-     * @brief 设置输出模式
-     * @param totem_pole true表示推挽输出（totem pole），false表示开漏输出（open drain）
-     * @return 成功返回true，失败返回false
-     * @note 推挽输出：可以直接驱动负载，输出能力强
-     * @note 开漏输出：需要上拉电阻，允许多个设备共享总线
-     */
-    bool set_output_mode(bool totem_pole);
-    
-    /**
-     * @brief 读取指定通道的PWM值
+     * @brief 设置指定通道的PWM速度/占空比（百分比接口，推荐使用）
      * @param channel 通道号，范围[0, 15]
-     * @param return_off_time true返回OFF时间，false返回ON时间
-     * @return PWM值（0-4095），失败或通道无效返回0
-     * @note 每个通道有ON和OFF两个时间点，共同定义PWM波形
-     */
-    uint16_t get_pwm(uint8_t channel, bool return_off_time = false);
-    
-    /**
-     * @brief 设置指定通道的PWM值（精确控制）
-     * @param channel 通道号，范围[0, 15]
-     * @param on_tick ON时间点（0-4095），PWM周期中输出变为高电平的tick
-     * @param off_tick OFF时间点（0-4095），PWM周期中输出变为低电平的tick
-     * @return 成功返回true，失败或通道无效返回false
-     * @note 可以实现相位偏移：通过设置不同的on_tick值
-     * @note 占空比 = (off_tick - on_tick) / 4096（当off_tick > on_tick时）
-     */
-    bool set_pwm(uint8_t channel, uint16_t on_tick, uint16_t off_tick);
-    
-    /**
-     * @brief 设置指定通道的PWM占空比（简化接口）
-     * @param channel 通道号，范围[0, 15]
-     * @param value 占空比值（0-4095），0=0%，4095≈100%
+     * @param speed_percent 速度/占空比百分比（0.0-100.0），0.0=0%，100.0=100%
      * @param invert true表示反转输出（低电平有效），false表示正常输出
      * @return 成功返回true，失败或通道无效返回false
-     * @note 这是set_pwm()的简化版本，自动处理ON/OFF时间
-     * @note 当value=0时输出全关，value=4095时输出全开
-     * @note 反转模式下，value=0输出全开，value=4095输出全关
+     * @note 这是最简化的接口，自动将百分比转换为PWM值
+     * @note 适用于电机速度控制、LED亮度控制等场景
+     * @note 超出范围的值会被自动限制在[0.0, 100.0]范围内
+     * 
+     * @example
+     * ```cpp
+     * // 设置通道0为50%速度
+     * pwm.set_speed(0, 50.0F);
+     * 
+     * // 设置通道1为100%亮度
+     * pwm.set_speed(1, 100.0F);
+     * 
+     * // 设置通道2为全开（100%）
+     * pwm.set_speed(2, 100.0F);
+     * 
+     * // 设置通道3为全关（0%）
+     * pwm.set_speed(3, 0.0F);
+     * ```
      */
-    bool set_pin(uint8_t channel, uint16_t value, bool invert = false);
+    bool set_speed(uint8_t channel, float speed_percent, bool invert = false);
     
     /**
      * @brief 设置指定通道的PWM脉宽（微秒单位，适用于舵机控制）
      * @param channel 通道号，范围[0, 15]
      * @param microseconds 脉宽（微秒），通常舵机范围是500-2500微秒
      * @return 成功返回true，失败返回false
-     * @note 根据当前prescale和振荡器频率计算对应的tick值
-     * @note 计算公式：tick = (microseconds * oscillator_freq) / (prescale + 1) / 1'000'000
-     * @note 脉宽会被限制在[0, 4095] tick范围内
+     * @note 根据当前prescale和振荡器频率自动计算对应的PWM值
+     * @note 脉宽会被限制在有效范围内
      * @pre 必须先调用set_pwm_frequency()设置合适的频率（通常50Hz用于舵机）
+     * 
+     * @example
+     * ```cpp
+     * // 设置舵机到中间位置（1500微秒）
+     * pwm.write_microseconds(0, 1500);
+     * ```
      */
     bool write_microseconds(uint8_t channel, uint16_t microseconds);
+
+private:
+    /**
+     * @brief 复位PCA9685芯片（内部使用）
+     * @return 成功返回true，失败返回false
+     * @note 通过设置MODE1寄存器的RESTART位来复位芯片
+     * @note initialize()内部会自动调用此函数
+     */
+    bool reset();
     
     /**
-     * @brief 读取当前的prescale值
+     * @brief 使芯片进入睡眠模式（内部使用）
+     * @return 成功返回true，失败返回false
+     * @note 睡眠模式下PWM输出停止，但寄存器值保持不变
+     * @note set_pwm_frequency()内部会自动调用此函数
+     */
+    bool sleep();
+    
+    /**
+     * @brief 唤醒芯片（内部使用）
+     * @return 成功返回true，失败返回false
+     * @note set_pwm_frequency()内部会自动调用此函数
+     */
+    bool wakeup();
+    
+    /**
+     * @brief 配置使用外部时钟源（内部使用）
+     * @param prescale 外部时钟的prescale值，范围[kPrescaleMin, kPrescaleMax]
+     * @return 成功返回true，失败返回false
+     * @note initialize()内部会自动调用此函数（当external_clock_prescale != 0时）
+     */
+    bool set_external_clock(uint8_t prescale);
+    
+    /**
+     * @brief 设置输出模式（高级功能，内部使用）
+     * @param totem_pole true表示推挽输出，false表示开漏输出
+     * @return 成功返回true，失败返回false
+     * @note 默认使用推挽输出，普通用户通常不需要修改
+     */
+    bool set_output_mode(bool totem_pole);
+    
+    /**
+     * @brief 读取指定通道的PWM值（内部使用）
+     * @param channel 通道号，范围[0, 15]
+     * @param return_off_time true返回OFF时间，false返回ON时间
+     * @return PWM值（0-4095），失败或通道无效返回0
+     */
+    uint16_t get_pwm(uint8_t channel, bool return_off_time = false);
+    
+    /**
+     * @brief 设置指定通道的PWM值（精确控制，内部使用）
+     * @param channel 通道号，范围[0, 15]
+     * @param on_tick ON时间点（0-4095）
+     * @param off_tick OFF时间点（0-4095）
+     * @return 成功返回true，失败或通道无效返回false
+     * @note set_pin()和set_speed()内部调用此函数
+     */
+    bool set_pwm(uint8_t channel, uint16_t on_tick, uint16_t off_tick);
+    
+    /**
+     * @brief 设置指定通道的PWM占空比（内部使用）
+     * @param channel 通道号，范围[0, 15]
+     * @param value 占空比值（0-4095），0=0%，4095≈100%
+     * @param invert true表示反转输出，false表示正常输出
+     * @return 成功返回true，失败或通道无效返回false
+     * @note set_speed()内部调用此函数
+     */
+    bool set_pin(uint8_t channel, uint16_t value, bool invert = false);
+    
+    /**
+     * @brief 读取当前的prescale值（内部使用）
      * @return prescale值（3-255），失败返回0
-     * @note prescale值决定PWM频率，读取失败时返回0作为错误指示
+     * @note write_microseconds()内部调用此函数
      */
     uint8_t read_prescale();
-
+    
     /**
-     * @brief 设置振荡器频率（用于校准）
+     * @brief 设置振荡器频率（内部使用，用于校准）
      * @param frequency_hz 振荡器频率（Hz），默认25MHz
      * @note 实际芯片的振荡器频率可能略有偏差，可通过示波器测量后校准
      * @note 频率精度直接影响PWM频率和脉宽的计算准确性
@@ -219,12 +272,11 @@ public:
     void set_oscillator_frequency(uint32_t frequency_hz);
     
     /**
-     * @brief 获取当前设置的振荡器频率
+     * @brief 获取当前设置的振荡器频率（内部使用）
      * @return 振荡器频率（Hz）
      */
     uint32_t oscillator_frequency() const;
 
-private:
     // PCA9685寄存器地址（根据数据手册定义）
     static constexpr uint8_t MODE1 = 0x00;           ///< 模式寄存器1：控制睡眠、重启、时钟源等
     static constexpr uint8_t MODE2 = 0x01;           ///< 模式寄存器2：控制输出驱动模式
@@ -299,5 +351,6 @@ private:
     libpca9685_agnostic::Delay_Interface& _delay;  ///< 延迟接口引用
     uint8_t _address;  ///< I2C设备地址
     uint32_t _oscillator_frequency;  ///< 振荡器频率（用于PWM计算）
+    bool _initialized;  ///< 初始化状态标志
 };
 

@@ -37,8 +37,17 @@ uint16_t clamp_value(uint16_t value) {
 }
 } // namespace
 
-PCA9685::PCA9685(libpca9685_agnostic::I2C_Interface& i2c, libpca9685_agnostic::Delay_Interface& delay, uint8_t device_address)
-    : _i2c(i2c), _delay(delay), _address(device_address), _oscillator_frequency(kDefaultOscillatorFrequency) {}
+PCA9685::PCA9685(libpca9685_agnostic::I2C_Interface& i2c, libpca9685_agnostic::Delay_Interface& delay, 
+                 uint8_t device_address, bool auto_init, uint8_t external_clock_prescale)
+    : _i2c(i2c), _delay(delay), _address(device_address), _oscillator_frequency(kDefaultOscillatorFrequency), _initialized(false) {
+    if (auto_init) {
+        _initialized = initialize(external_clock_prescale);
+    }
+}
+
+bool PCA9685::is_initialized() const {
+    return _initialized;
+}
 
 bool PCA9685::initialize(uint8_t external_clock_prescale) {
     // 首先复位芯片，确保从已知状态开始
@@ -61,6 +70,7 @@ bool PCA9685::initialize(uint8_t external_clock_prescale) {
         }
     }
 
+    _initialized = true;
     return true;
 }
 
@@ -297,6 +307,25 @@ bool PCA9685::set_pin(uint8_t channel, uint16_t value, bool invert) {
     // 正常情况：ON=0, OFF=value
     // 这样设置的原因：从周期开始就输出高电平，在value时刻变为低电平
     return set_pwm(channel, 0, value);
+}
+
+bool PCA9685::set_speed(uint8_t channel, float speed_percent, bool invert) {
+    // 限制速度百分比在有效范围内（防御性编程）
+    if (speed_percent < 0.0F) {
+        speed_percent = 0.0F;
+    } else if (speed_percent > 100.0F) {
+        speed_percent = 100.0F;
+    }
+    
+    // 将百分比转换为PWM值（0-4095）
+    // 公式：pwm_value = (speed_percent / 100.0) * 4095
+    // 使用浮点数计算保证精度，然后四舍五入到最接近的整数
+    float pwm_float = (speed_percent / 100.0F) * static_cast<float>(kResolution - 1);
+    uint16_t pwm_value = static_cast<uint16_t>(pwm_float + 0.5F);  // 四舍五入
+    
+    // 调用set_pin()设置PWM值
+    // 这样可以利用set_pin()中已有的边界处理和反转逻辑
+    return set_pin(channel, pwm_value, invert);
 }
 
 bool PCA9685::write_microseconds(uint8_t channel, uint16_t microseconds) {
